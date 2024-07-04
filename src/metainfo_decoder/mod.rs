@@ -1,23 +1,40 @@
+mod element;
+
 use std::{
     collections::HashMap,
-    error::Error,
     fmt::{Debug, Display},
 };
 
-#[derive(Debug, Default)]
-pub enum Element {
-    #[default]
-    Empty,
-    Dictionary(HashMap<String, Element>),
-    List(Vec<Element>),
-    ByteString(Contents),
-    Int(i32),
-}
+use chrono::{DateTime, TimeZone, Utc};
+use element::*;
 
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct Metainfo {
-    root_dir: Element,
+    // root_dir: Element,
+    announce: String,
+    announce_list: Option<Vec<Vec<String>>>,
+    creation_date: Option<DateTime<Utc>>,
+    comment: Option<String>,
+    created_by: Option<String>,
+    encoding: Option<String>,
+    info: HashMap<String, Element>
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum MetainfoDecodingError {
+    BadFormat(FmtError),
+    FileWasntDictionary(ElementError),
+    FileWithoutAnnounce,
+    FileWithoutInfo,
+    AnnounceWasntString(ElementError),
+    BadlyFormatedAnnounceList(ElementError),
+    BadlyFormatedCreationDate(ElementError),
+    BadlyFormatedComment(ElementError),
+    BadlyFormatedCreatedBy(ElementError),
+    BadlyFormatedEncoding(ElementError),
+    InfoWasntDictionary(ElementError)
 }
 
 pub struct TorrentDecoder<'a> {
@@ -67,14 +84,6 @@ impl Debug for FmtError {
     }
 }
 
-impl Error for FmtError {}
-
-#[derive(Debug)]
-pub enum Contents {
-    String(String),
-    Bytes(Vec<u8>),
-}
-
 impl<'a> TorrentDecoder<'a> {
     pub fn new(buffer: &'a [u8]) -> Self {
         Self { buffer, index: 0 }
@@ -86,8 +95,8 @@ impl<'a> TorrentDecoder<'a> {
             b'l' => Ok(Some(self.decode_list()?)),
             b'i' => Ok(Some(self.decode_integer()?)),
             b'0'..=b'9' => {
-                let bytestring = self.decode_byte_string();
-                Ok(Some(Element::ByteString(bytestring?)))
+                let bytestring = self.decode_byte_string()?;
+                Ok(Some(Element::ByteString(bytestring)))
             }
             b'e' => {
                 // println!("END");
@@ -235,9 +244,90 @@ impl<'a> TorrentDecoder<'a> {
         }
     }
 
-    pub fn decode_metafile(&mut self) -> Result<Metainfo, FmtError> {
-        let root_dir = self.decode_dictionary()?;
+    pub fn decode_metafile(&mut self) -> Result<Metainfo, MetainfoDecodingError> {
+        let mut root = self
+            .decode_dictionary()
+            .map_err(MetainfoDecodingError::BadFormat)?
+            .get_dictionary()
+            .map_err(MetainfoDecodingError::FileWasntDictionary)?;
 
-        Ok(Metainfo { root_dir })
+        let announce = root
+            .remove("announce")
+            .ok_or(MetainfoDecodingError::FileWithoutAnnounce)?
+            .get_string()
+            .map_err(MetainfoDecodingError::AnnounceWasntString)?;
+
+        let announce_list = if let Some(v) = root.remove("announce-list") {
+            let mut vec_return = vec![];
+
+            let vec = v
+                .get_list()
+                .map_err(MetainfoDecodingError::BadlyFormatedAnnounceList)?;
+
+            for i in vec {
+                let list: Result<Vec<String>, ElementError> = i
+                    .get_list()
+                    .map_err(MetainfoDecodingError::BadlyFormatedAnnounceList)?
+                    .into_iter()
+                    .map(|v| v.get_string())
+                    .collect();
+                vec_return
+                    .push(list.map_err(MetainfoDecodingError::BadlyFormatedAnnounceList)?);
+            }
+
+            Some(vec_return)
+        } else {
+            None
+        };
+
+        let creation_date = if let Some(v) = root.remove("creation date") {
+            let unix_date = v.get_integer()
+                .map_err(MetainfoDecodingError::BadlyFormatedCreationDate)?
+                .into();
+
+            Some(Utc.timestamp_opt(unix_date, 0).unwrap())
+        } else {
+            None
+        };
+
+        let comment = if let Some(v) = root.remove("comment") {
+            let comment = v.get_string().map_err(MetainfoDecodingError::BadlyFormatedComment)?;
+
+            Some(comment)
+        } else {
+            None
+        };
+
+        let created_by = if let Some(v) = root.remove("comment") {
+            let created_by = v.get_string().map_err(MetainfoDecodingError::BadlyFormatedCreatedBy)?;
+
+            Some(created_by)
+        } else {
+            None
+        };
+
+        let encoding = if let Some(v) = root.remove("comment") {
+            let encoding = v.get_string().map_err(MetainfoDecodingError::BadlyFormatedEncoding)?;
+
+            Some(encoding)
+        } else {
+            None
+        };
+
+        let info = root
+            .remove("info")
+            .ok_or(MetainfoDecodingError::FileWithoutInfo)?
+            .get_dictionary()
+            .map_err(MetainfoDecodingError::InfoWasntDictionary)?;
+
+        Ok(Metainfo {
+            announce,
+            announce_list,
+            creation_date,
+            comment,
+            created_by,
+            encoding,
+            info
+        })
     }
 }

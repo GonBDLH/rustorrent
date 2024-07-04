@@ -8,7 +8,7 @@ mod metainfo_decoder;
 use metainfo_decoder::TorrentDecoder;
 
 fn main() {
-    let file = File::open("sample.torrent").unwrap();
+    let file = File::open("torrents/sample.torrent").unwrap();
     let mut read_buffer = BufReader::new(file);
 
     let mut buffer = Vec::new();
@@ -19,6 +19,4 @@ fn main() {
     let metainfo = decoder.decode_metafile();
 
     println!("{:?}", metainfo);
-
-    // println!("{:?}", metainfo);
 }
